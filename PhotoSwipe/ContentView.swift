@@ -3,39 +3,81 @@ import Photos
 import AVKit
 import AVFoundation
 
+// MARK: - Data Models
+
+/// Represents a user action taken during a swiping session (keeping or deleting a photo).
+/// Used for implementing undo functionality and tracking session history.
 struct SwipedAction {
+    /// The photo item that was acted upon.
     let photoItem: PhotoItem
+    /// Whether the photo was deleted (true) or kept (false).
     let wasDeleted: Bool
+    /// The file size in MB of the deleted photo (0 if kept).
     let size: Double
 }
 
+/// Wrapper struct for a video asset to be displayed in fullscreen.
+/// Conforms to Identifiable for SwiftUI fullscreen cover presentation.
 struct VideoToPlay: Identifiable {
+    /// Unique identifier for the video.
     let id = UUID()
+    /// Reference to the underlying PHAsset video file.
     let asset: PHAsset
 }
 
+// MARK: - Main Content View
+
+/// Main view of the PhotoSwipe app. Manages the overall app flow including:
+/// - Home screen with statistics and session controls
+/// - Swipe interface for reviewing and selecting photos to delete
+/// - Settings sheet for configuring app preferences
+/// - Video fullscreen player for viewing selected videos
 struct ContentView: View {
+    // MARK: - State Management
+    
+    /// Manager handling all photo library operations and session state.
     @StateObject private var photoManager = PhotoManager()
+    /// Current drag offset for swipe gesture interaction.
     @State private var offset: CGSize = .zero
     
-    @State private var swipeHistory: [SwipedAction] = []
-    @State private var photosToDelete: [PhotoItem] = []
+    // MARK: - Session State
     
+    /// History of swipe actions to support undo functionality.
+    @State private var swipeHistory: [SwipedAction] = []
+    /// Array of photos selected for deletion in the current session.
+    @State private var photosToDelete: [PhotoItem] = []
+    /// Total size in MB of photos selected for deletion in the current session.
     @State private var currentSessionSavedMB: Double = 0.0
     
-    @AppStorage("totalMBReleased") private var totalMBReleased: Double = 0.0
-    @AppStorage("dayStreak") private var dayStreak: Int = 0
-    @AppStorage("lastCheckDate") private var lastCheckDate: String = ""
+    // MARK: - Persistent State
     
-    // NUOVO: Tiene traccia se c'è una sessione a metà lasciata in sospeso
+    /// Total MB of photos and videos deleted across all sessions (persisted to device).
+    @AppStorage("totalMBReleased") private var totalMBReleased: Double = 0.0
+    /// Number of consecutive days the user has participated in photo cleanup (persisted to device).
+    @AppStorage("dayStreak") private var dayStreak: Int = 0
+    /// Date string of the last day the user completed the daily cleanup (persisted to device).
+    @AppStorage("lastCheckDate") private var lastCheckDate: String = ""
+    /// Whether a photo review session is currently in progress (persisted to device).
     @AppStorage("sessionInProgress") private var isSessionInProgress: Bool = false
     
+    // MARK: - UI State
+    
+    /// Controls visibility of the swipe interface view.
     @State private var isShowingSwipeView = false
+    /// Optional video to display in fullscreen player.
     @State private var videoToPlay: VideoToPlay? = nil
+    /// Controls visibility of the settings sheet.
     @State private var isShowingSettings = false
     
+    // MARK: - Theme
+    
+    /// Purple-to-indigo gradient used throughout the app for visual consistency.
     let themeGradient = LinearGradient(colors: [.purple, .indigo], startPoint: .topLeading, endPoint: .bottomTrailing)
     
+    // MARK: - Computed Properties
+    
+    /// Determines if the user has already completed today's cleanup task.
+    /// - Returns: True if lastCheckDate matches today's date.
     private var isTodayDone: Bool {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
@@ -53,7 +95,7 @@ struct ContentView: View {
                     
                     if isShowingSwipeView {
                         VStack {
-                            // BARRA DI NAVIGAZIONE SUPERIORE
+                            // Top navigation bar for the swipe experience.
                             HStack {
                                 Button(action: { isShowingSwipeView = false }) {
                                     HStack {
@@ -65,7 +107,7 @@ struct ContentView: View {
                                 }
                                 Spacer()
                                 
-                                // NUOVO PULSANTE: "FERMATI A METÀ" (Visibile solo se ci sono foto nel cestino temporaneo o elementi rimasti)
+                                // Show a pause button when there are items waiting to be deleted.
                                 if !photosToDelete.isEmpty {
                                     Button(action: emptyTrashPartiallyAndExit) {
                                         HStack {
@@ -90,12 +132,12 @@ struct ContentView: View {
                             }
                             .padding()
                             
-                            // Barra di progresso (Inalterata)
+                            // Progress bar for the current swipe session.
                             if !photoManager.isLoading {
                                 let totalItems = photoManager.sessionTotalCount
                                 if totalItems > 0 {
                                     VStack(spacing: 8) {
-                                        // Elementi fatti = quelli già registrati nel rullino + quelli temporanei di questa sessione attiva
+                                        // Count the items already completed in the current session.
                                         let itemsDone = photoManager.sessionViewedCount
                                         
                                         Text("\(itemsDone) / \(totalItems) COMPLETED")
@@ -114,7 +156,7 @@ struct ContentView: View {
                             Spacer()
                             
                             if photoManager.isLoading {
-                                // ... Schermata Caricamento (Inalterata) ...
+                                // Loading state while assets are being fetched.
                                 VStack(spacing: 25) {
                                     ProgressView()
                                         .scaleEffect(1.5)
@@ -124,7 +166,7 @@ struct ContentView: View {
                                         .foregroundColor(.gray)
                                 }
                             } else if let currentItem = photoManager.fetchedItems.first {
-                                // --- SCHERMATA DI SWIPE ---
+                                // Main swipe screen for reviewing photos and videos.
                                 ZStack {
                                     RoundedRectangle(cornerRadius: 24)
                                         .fill(Color.black)
@@ -197,7 +239,7 @@ struct ContentView: View {
                                                     if !photoManager.fetchedItems.isEmpty {
                                                         let removed = photoManager.fetchedItems.removeFirst()
                                                         swipeHistory.append(SwipedAction(photoItem: removed, wasDeleted: false, size: 0))
-                                                        // MODIFICA: Salva l'elemento come visto
+                                                        // Mark the asset as viewed after keeping it.
                                                         photoManager.markAssetAsViewed(id: removed.asset.localIdentifier)
                                                     }
                                                     offset = .zero
@@ -211,7 +253,7 @@ struct ContentView: View {
                                                         swipeHistory.append(SwipedAction(photoItem: removed, wasDeleted: true, size: photoSize))
                                                         photosToDelete.append(removed)
                                                         currentSessionSavedMB += photoSize
-                                                        // MODIFICA: Salva l'elemento come visto
+                                                        // Mark the asset as viewed after deleting it.
                                                         photoManager.markAssetAsViewed(id: removed.asset.localIdentifier)
                                                     }
                                                     offset = .zero
@@ -223,7 +265,7 @@ struct ContentView: View {
                                 )
                                 
                             } else if !photosToDelete.isEmpty {
-                                // --- SCHERMATA FINE SESSIONE STANDARD (Tutto il mazzo completato) ---
+                                // End-of-session screen when the current deck is finished.
                                 VStack(spacing: 20) {
                                     Image(systemName: "trash.circle.fill")
                                         .font(.system(size: 80))
@@ -247,8 +289,8 @@ struct ContentView: View {
                                                 photosToDelete.removeAll()
                                                 swipeHistory.removeAll()
                                                 currentSessionSavedMB = 0.0
-                                                photoManager.clearSessionState() // FINE SESSIONE COMPLETA: Resetta lo stato parziale
-                                                checkAndSetStreak() // ASSEGNA STREAK COMPLETA
+                                                photoManager.clearSessionState() // Clear the partial session state.
+                                                checkAndSetStreak() // Update the daily streak.
                                             }
                                         }
                                     }) {
@@ -276,14 +318,14 @@ struct ContentView: View {
                                 }
                                 .padding()
                                 .onAppear {
-                                    photoManager.clearSessionState() // Fine sessione senza eliminazioni rimaste
+                                    photoManager.clearSessionState() // Clear the session state when nothing remains to delete.
                                     checkAndSetStreak()
                                 }
                             }
                             Spacer()
                         }
                     } else {
-                        // --- SCHERMATA HOME PRINCIPALE ---
+                        // Main home screen.
                         VStack(spacing: 0) {
                             HStack {
                                 Spacer()
@@ -311,7 +353,7 @@ struct ContentView: View {
                             
                             Spacer()
                             
-                            // Statistiche (Spazio salvato e Streak)
+                            // Summary statistics for saved space and streak progress.
                             VStack(spacing: 20) {
                                 HStack {
                                     Image(systemName: "trash.fill")
@@ -340,10 +382,10 @@ struct ContentView: View {
                                 HStack {
                                     Image(systemName: "flame.fill")
                                         .font(.title)
-                                    // Se oggi è completato mostra il colore arancione, altrimenti grigio
+                                    // Highlight the streak icon when the day is already completed.
                                         .foregroundColor(isTodayDone ? .orange : Color(.systemGray3))
                                         .frame(width: 50)
-                                    // Un piccolo effetto di scala per far risaltare il fuoco quando è attivo
+                                    // Slightly enlarge the icon when the streak is active.
                                         .scaleEffect(isTodayDone ? 1.1 : 1.0)
                                         .animation(.spring(), value: isTodayDone)
                                     
@@ -356,7 +398,7 @@ struct ContentView: View {
                                             Text("\(dayStreak) Days")
                                                 .font(.title2).bold()
                                             
-                                            // Mostra il progresso effettivo es. "In Progress (5/20)"
+                                            // Show the current status for the daily streak.
                                             let statusText = isTodayDone ? "• Done" : (isSessionInProgress ? "• In Progress (\(photoManager.sessionViewedCount)/\(photoManager.sessionTotalCount))" : "• To Do")
                                             
                                             Text(statusText)
@@ -380,16 +422,16 @@ struct ContentView: View {
                             
                             Spacer()
                             
-                            // --- LOGICA BOTTONI DINAMICI IN HOME ---
+                            // Dynamic home buttons based on the current session state.
 
                             if photoManager.isLoading {
-                                // SCHERMATA DI CARICAMENTO DINAMICA
+                                // Loading state shown on the home screen.
                                 VStack(spacing: 12) {
                                     ProgressView()
                                         .progressViewStyle(CircularProgressViewStyle(tint: .purple))
                                         .scaleEffect(1.5)
                                     
-                                    // Qui usiamo la variabile che hai già creato nel PhotoManager!
+                                    // Use the loading message provided by the photo manager.
                                     Text(photoManager.loadingMessage)
                                         .font(.subheadline)
                                         .fontWeight(.medium)
@@ -398,15 +440,15 @@ struct ContentView: View {
                                         .animation(.easeInOut, value: photoManager.loadingMessage)
                                 }
                                 .frame(maxWidth: .infinity)
-                                .frame(height: 80) // Spazio per non far saltare l'interfaccia
+                                .frame(height: 80) // Reserve space so the interface does not jump.
                                 .padding(.horizontal, 24)
                                 .padding(.bottom, 40)
                                 
                             } else {
-                                // I PULSANTI VENGONO MOSTRATI SOLO SE IL CARICAMENTO È FINITO
+                                // Buttons are shown only once loading is complete.
                                 
                                 if isSessionInProgress {
-                                    // CASO 1: SESSIONE IN CORSO (PAUSA A METÀ)
+                                    // Case 1: a session is already in progress.
                                     VStack(spacing: 15) {
                                         Text("⏳ You have a session in progress")
                                             .font(.headline)
@@ -431,7 +473,7 @@ struct ContentView: View {
                                             .cornerRadius(16)
                                         }
                                         
-                                        // Reset manuale opzionale
+                                        // Optional manual reset for the current session.
                                         Button("Reset and start over") {
                                             photoManager.clearSessionState()
                                             photoManager.checkPermissionAndFetch()
@@ -443,7 +485,7 @@ struct ContentView: View {
                                     .padding(.bottom, 40)
                                     
                                 } else if isTodayDone {
-                                    // CASO 2: GIORNATA COMPLETATA
+                                    // Case 2: the day is already complete.
                                     VStack(spacing: 15) {
                                         Text("🎉 You're all caught up for today!")
                                             .font(.headline)
@@ -476,7 +518,7 @@ struct ContentView: View {
                                     .padding(.bottom, 40)
                                     
                                 } else {
-                                    // CASO 3: NUOVA SESSIONE DA INIZIARE
+                                    // Case 3: start a new session.
                                     Button(action: {
                                         currentSessionSavedMB = 0.0
                                         withAnimation(.easeInOut) {
@@ -514,6 +556,11 @@ struct ContentView: View {
         }
     }
     
+    // MARK: - Helper Methods
+    
+    /// Reverts the last swipe action (undo functionality).
+    /// If a photo was deleted, removes it from the deletion queue and updates the saved size.
+    /// Reinserts the photo at the front of the fetched items list.
     private func undoLastSwipe() {
         guard let lastAction = swipeHistory.popLast() else { return }
         withAnimation(.spring()) {
@@ -522,12 +569,14 @@ struct ContentView: View {
                 currentSessionSavedMB -= lastAction.size
             }
             photoManager.fetchedItems.insert(lastAction.photoItem, at: 0)
-            // MODIFICA: Rimuovi dagli ID visti parziali
+            // Remove the asset from the partially viewed IDs.
             photoManager.removeLastViewedAsset(id: lastAction.photoItem.asset.localIdentifier)
         }
     }
     
-    // NUOVA FUNZIONE: Elimina quello che c'è finora nel cestino, chiude la schermata e imposta lo stato "continua"
+    /// Deletes selected photos and exits the swipe view while maintaining session state.
+    /// Used when the user wants to save progress but continue the session later.
+    /// Does not increment the daily streak (session is paused, not completed).
     private func emptyTrashPartiallyAndExit() {
         let assetsToDelete = photosToDelete.map { $0.asset }
         photoManager.deletePhotos(assets: assetsToDelete) { success in
@@ -537,18 +586,21 @@ struct ContentView: View {
                 swipeHistory.removeAll()
                 currentSessionSavedMB = 0.0
                 
-                // Chiude la schermata di swipe tornando alla Home
+                // Return to the home screen after saving the partial cleanup.
                 withAnimation(.easeInOut) {
                     isShowingSwipeView = false
                 }
                 
-                // IMPORTANTE: NON chiama checkAndSetStreak(), quindi NON assegna la streak giornaliera!
-                // Ricarica la lista escludendo le foto eliminate
+                // Do not update the streak here, since the session is only paused.
+                // Reload the list without the deleted items.
                 photoManager.checkPermissionAndFetch()
             }
         }
     }
     
+    /// Checks if today's date is new and updates the daily streak accordingly.
+    /// Increments the streak counter and updates the last check date.
+    /// Reschedules notifications when a day is completed.
     private func checkAndSetStreak() {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
@@ -558,9 +610,8 @@ struct ContentView: View {
             dayStreak += 1
             lastCheckDate = todayString
             
-            // --- AGGIORNAMENTO NOTIFICA ---
-            // Se le notifiche sono attive, ricalcoliamo il reminder dicendo al sistema
-            // che per oggi il compito è già stato assolto
+            // Update the notification reminder when the day is completed.
+            // If notifications are enabled, tell the system that today's task is already done.
             if UserDefaults.standard.bool(forKey: "notificationsEnabled") {
                 let savedTime = UserDefaults.standard.double(forKey: "notificationTime")
                 NotificationManager.shared.scheduleDailyNotification(
@@ -571,6 +622,9 @@ struct ContentView: View {
         }
     }
     
+    /// Formats a duration in seconds into MM:SS format for display.
+    /// - Parameter duration: Time interval in seconds.
+    /// - Returns: Formatted string like "02:35" for 2 minutes 35 seconds.
     private func formatDuration(_ duration: TimeInterval) -> String {
         let minutes = Int(duration) / 60
         let seconds = Int(duration) % 60
@@ -578,20 +632,41 @@ struct ContentView: View {
     }
 }
 
+// MARK: - Settings View
+
+/// Settings view allowing users to configure app behavior and preferences.
+/// Includes options for media type filtering, sort order, and daily reminders.
 struct SettingsView: View {
+    // MARK: - Environment
+    
+    /// Environment variable to dismiss this sheet.
     @Environment(\.dismiss) var dismiss
     
+    // MARK: - Settings State
+    
+    /// Filter for media types: "Both", "Photos Only", or "Videos Only" (persisted).
     @AppStorage("mediaTypeFilter") private var mediaTypeFilter: String = "Both"
+    /// Sort order for photos: "Oldest First", "Newest First", or "Random" (persisted).
     @AppStorage("sortOrder") private var sortOrder: String = "Oldest First"
     
-    // NUOVI STATI PER LE NOTIFICHE
+    // MARK: - Notification Settings
+    
+    /// Whether daily reminder notifications are enabled (persisted).
     @AppStorage("notificationsEnabled") private var notificationsEnabled: Bool = false
+    /// Time of day for the daily reminder notification (stored as time interval since 1970, persisted).
     @AppStorage("notificationTime") private var notificationTime: Double = Date().timeIntervalSince1970
     
+    // MARK: - Available Options
+    
+    /// Array of available media type filter options.
     let mediaTypes = ["Both", "Photos Only", "Videos Only"]
+    /// Array of available sort order options.
     let sortOrders = ["Oldest First", "Newest First", "Random"]
     
-    // Helper per convertire il Double di AppStorage in una Date di Swift
+    // MARK: - Computed Properties
+    
+    /// Creates a binding to convert between stored time interval and Date for the time picker.
+    /// - Returns: A Binding<Date> for use with the CustomDatePicker.
     private var selectedDate: Binding<Date> {
         Binding(
             get: { Date(timeIntervalSince1970: notificationTime) },
@@ -618,7 +693,7 @@ struct SettingsView: View {
                     }
                 }
                 
-                // NUOVA SEZIONE NOTIFICHE
+                // Notification settings section.
                 Section(header: Text("Daily Reminder")) {
                     Toggle("Enable Reminders", isOn: $notificationsEnabled)
                         .onChange(of: notificationsEnabled) { oldValue, newValue in
@@ -629,14 +704,13 @@ struct SettingsView: View {
                     if notificationsEnabled {
                         HStack {
                             Spacer()
-                            // USIAMO IL NUOVO COMPONENTE CON INTERVALLO A 15 MINUTI
+                            // Use the custom time picker with 15-minute intervals.
                             CustomDatePicker(selection: selectedDate, minuteInterval: 15)
                                 .frame(height: 150)
                             Spacer()
                         }
                         .onChange(of: notificationTime) { oldValue, newValue in
-                            // Ora questo invia semplicemente l'aggiornamento,
-                            // senza bisogno di fare calcoli o arrotondamenti!
+                            // Update the notification when the selected time changes.
                             updateNotification()
                         }
                     }
@@ -656,13 +730,18 @@ struct SettingsView: View {
         }
     }
     
+    // MARK: - Helper Methods
+    
+    /// Handles the toggle of notifications on/off.
+    /// Requests user permission if enabling, or cancels the notification if disabling.
+    /// - Parameter enabled: Whether notifications should be enabled.
     private func handleNotificationToggle(enabled: Bool) {
         if enabled {
             NotificationManager.shared.requestAuthorization { granted in
                 if granted {
                     updateNotification()
                 } else {
-                    // Se l'utente rifiuta i permessi a livello di sistema, spegniamo il toggle
+                    // Disable the toggle if the user rejects system permissions.
                     notificationsEnabled = false
                 }
             }
@@ -671,8 +750,10 @@ struct SettingsView: View {
         }
     }
     
+    /// Updates the scheduled notification with the current settings.
+    /// Checks whether today's task is already completed before rescheduling.
     private func updateNotification() {
-        // Recuperiamo lo stato odierno per capire se saltare la notifica di oggi
+        // Check whether today is already completed before rescheduling the reminder.
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
         let lastCheckDate = UserDefaults.standard.string(forKey: "lastCheckDate") ?? ""
@@ -685,18 +766,28 @@ struct SettingsView: View {
     }
 }
 
+// MARK: - Full Screen Video Player
+
+/// Full-screen video player for displaying selected videos from the photo library.
+/// Handles video loading from iCloud, playback controls, and progress indication.
 struct FullScreenVideoPlayer: View {
+    // MARK: - Properties
+    
+    /// The PHAsset video to display.
     let asset: PHAsset
+    /// AVPlayer instance for video playback.
     @State private var player: AVPlayer?
+    /// Environment variable to dismiss this view.
     @Environment(\.dismiss) var dismiss
+    /// Message displayed during video loading (includes download progress).
     @State private var downloadProgressMessage: String = "Loading video..."
     
     var body: some View {
-        // Rimuoviamo l'allineamento globale topTrailing dallo ZStack per gestirlo internamente
+        // Handle the video layout and controls inside the full-screen view.
         ZStack {
             Color.black.ignoresSafeArea()
             
-            // --- LIVELLO DEL VIDEO ---
+            // Video layer.
             if let player = player {
                 VStack {
                     Spacer(minLength: 0)
@@ -717,7 +808,7 @@ struct FullScreenVideoPlayer: View {
                     dismiss()
                 }
             } else {
-                // Schermata di caricamento/download
+                // Loading screen while the video is being prepared.
                 VStack(spacing: 20) {
                     ProgressView()
                         .progressViewStyle(CircularProgressViewStyle(tint: .white))
@@ -730,32 +821,37 @@ struct FullScreenVideoPlayer: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             
-            // --- LIVELLO DEI CONTROLLI (In alto) ---
+            // Overlay controls shown at the top of the screen.
             VStack {
                 HStack {
-                    // Spacer a sinistra e destra per forzare la X al centro
+                    // Add spacing on both sides so the close button stays centered.
                     Spacer()
                     
                     Button(action: { dismiss() }) {
                         Image(systemName: "xmark.circle.fill")
                             .font(.largeTitle)
-                        // Un colore leggermente meno contrastato per non disturbare troppo la visione
+                        // Use a softer color so the controls do not distract from the video.
                             .foregroundColor(.white.opacity(0.7))
                             .shadow(color: .black.opacity(0.3), radius: 5, x: 0, y: 3)
-                            .padding(.top, 16) // Spazio dal bordo superiore del dispositivo
+                            .padding(.top, 16) // Add space from the top edge of the device.
                     }
                     
                     Spacer()
                 }
-                // Spingiamo tutto il contenuto dell'HStack verso l'alto
+                // Push the control area upward within the layout.
                 Spacer()
             }
-            // Assicuriamo che i controlli siano sopra al video
+            // Ensure the controls appear above the video content.
             .zIndex(1)
         }
         .onAppear(perform: loadVideo)
     }
     
+    // MARK: - Private Methods
+    
+    /// Loads the video from the photo library.
+    /// Handles iCloud download with progress updates.
+    /// Initializes the AVPlayer once the video is ready.
     private func loadVideo() {
         let options = PHVideoRequestOptions()
         options.isNetworkAccessAllowed = true
@@ -778,6 +874,8 @@ struct FullScreenVideoPlayer: View {
         }
     }
     
+    /// Configures the audio session for video playback.
+    /// Sets the category to playback to allow audio during video playback.
     private func configureAudioSession() {
         do {
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [])
@@ -788,6 +886,10 @@ struct FullScreenVideoPlayer: View {
     }
 }
 
+// MARK: - Permission Denied View
+
+/// View displayed when the user has denied or restricted access to their photo library.
+/// Explains why photo access is needed and provides a button to open Settings.
 struct PermissionDeniedView: View {
     var body: some View {
         VStack(spacing: 24) {
@@ -807,7 +909,7 @@ struct PermissionDeniedView: View {
                 .padding(.horizontal, 30)
             
             Button(action: {
-                // APRE LE IMPOSTAZIONI DI IOS DIRETTAMENTE SULL'APP
+                // Open the iOS settings screen directly for this app.
                 if let settingsURL = URL(string: UIApplication.openSettingsURLString) {
                     UIApplication.shared.open(settingsURL)
                 }

@@ -1,11 +1,19 @@
 import Foundation
 import UserNotifications
 
+/// Singleton manager responsible for handling all local push notifications.
+/// Handles requesting user permissions, scheduling daily reminders, and canceling notifications.
 class NotificationManager {
+    /// Shared singleton instance of NotificationManager.
     static let shared = NotificationManager()
+    
+    /// Private initializer to enforce singleton pattern.
     private init() {}
     
-    // Richiede i permessi all'utente
+    // MARK: - Authorization
+    
+    /// Requests user permission to display notifications with alert, sound, and badge options.
+    /// - Parameter completion: Closure called with the authorization result (granted/denied).
     func requestAuthorization(completion: @escaping (Bool) -> Void) {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
             DispatchQueue.main.async {
@@ -14,12 +22,19 @@ class NotificationManager {
         }
     }
     
-    // Schedula la notifica quotidiana
+    // MARK: - Scheduling
+    
+    /// Schedules a daily reminder notification at a specific time.
+    /// Automatically removes any previously scheduled reminders to avoid duplicates.
+    /// The notification repeats daily at the same time.
+    /// - Parameters:
+    ///   - date: The time of day when the notification should be triggered.
+    ///   - isTodayDone: Not used in the current implementation but available for future logic.
     func scheduleDailyNotification(at date: Date, isTodayDone: Bool) {
-        // Rimuoviamo prima eventuali notifiche vecchie per evitare duplicati
+        // Remove any previous reminder to avoid duplicates.
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["daily_reminder"])
         
-        // Se l'utente ha già completato lo swipe di oggi, non pianifichiamo la notifica per oggi (evita disturbi inutili)
+        // Use the selected time to create a repeating daily trigger.
         let calendar = Calendar.current
         let components = calendar.dateComponents([.hour, .minute], from: date)
         
@@ -28,7 +43,7 @@ class NotificationManager {
         content.body = "Your daily memories are ready to be reviewed. Don't lose your streak!"
         content.sound = .default
         
-        // Trigger ricorrente ogni giorno all'ora stabilita
+        // Create a recurring notification trigger for the chosen time.
         let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: true)
         let request = UNNotificationRequest(identifier: "daily_reminder", content: content, trigger: trigger)
         
@@ -39,14 +54,11 @@ class NotificationManager {
         }
     }
     
-    // Disattiva i promemoria
+    // MARK: - Cancellation
+    
+    /// Cancels the scheduled daily reminder notification.
+    /// Removes all pending notification requests with the "daily_reminder" identifier.
     func cancelNotification() {
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["daily_reminder"])
     }
-}//
-//  NotificationManager.swift
-//  PhotoSwipe
-//
-//  Created by Alessio Novel on 17/07/2026.
-//
-
+}
