@@ -22,6 +22,7 @@ class PhotoManager: NSObject, ObservableObject {
     private let viewedAssetIdsKey = "sessionViewedAssetIds"
     // NUOVA CHIAVE: Salva il totale iniziale della sessione
     private let sessionTotalCountKey = "sessionTotalCount"
+    private let sessionDateKey = "sessionDate"
     
     // NUOVA VARIABILE GENERATA CORRETTAMENTE
         @Published var sessionTotalCount: Int = UserDefaults.standard.integer(forKey: "sessionTotalCount") {
@@ -53,15 +54,34 @@ class PhotoManager: NSObject, ObservableObject {
     }
     
     func fetchPhotosFromThisDayInPastYears() {
-            DispatchQueue.main.async {
+        DispatchQueue.main.async {
                 self.isLoading = true
                 self.loadingMessage = "Searching your library..."
             }
             
             DispatchQueue.global(qos: .userInitiated).async {
-                var itemsFound: [PhotoItem] = []
-                
                 let calendar = Calendar.current
+                
+                // Generiamo la stringa della data odierna (es. "2026-07-18")
+                let formatter = DateFormatter()
+                formatter.dateFormat = "yyyy-MM-dd"
+                let todayString = formatter.string(from: Date())
+                
+                // CONTROLLO CORNER CASE: Il giorno è cambiato rispetto alla sessione in corso?
+                let savedSessionDate = UserDefaults.standard.string(forKey: self.sessionDateKey) ?? ""
+                
+                if !savedSessionDate.isEmpty && savedSessionDate != todayString {
+                    // Il giorno è cambiato! Forziamo il reset della sessione del giorno precedente
+                    UserDefaults.standard.set(false, forKey: self.sessionInProgressKey)
+                    UserDefaults.standard.set([], forKey: self.viewedAssetIdsKey)
+                    UserDefaults.standard.set(0, forKey: self.sessionTotalCountKey)
+                    UserDefaults.standard.set(todayString, forKey: self.sessionDateKey)
+                } else if savedSessionDate.isEmpty {
+                    // Se non c'era nessuna sessione, impostiamo la data di oggi
+                    UserDefaults.standard.set(todayString, forKey: self.sessionDateKey)
+                }
+
+                var itemsFound: [PhotoItem] = []
                 let todayComponents = calendar.dateComponents([.day, .month], from: Date())
                 guard let targetDay = todayComponents.day, let targetMonth = todayComponents.month else { return }
                 
@@ -158,16 +178,21 @@ class PhotoManager: NSObject, ObservableObject {
             }
         }
         
-        func markAssetAsViewed(id: String) {
-            var viewedIds = UserDefaults.standard.stringArray(forKey: viewedAssetIdsKey) ?? []
-            if !viewedIds.contains(id) {
-                viewedIds.append(id)
-                UserDefaults.standard.set(viewedIds, forKey: viewedAssetIdsKey)
-            }
-            UserDefaults.standard.set(true, forKey: sessionInProgressKey)
-            // Forza l'aggiornamento della UI notificando il cambiamento di stato
-            objectWillChange.send()
+    func markAssetAsViewed(id: String) {
+        var viewedIds = UserDefaults.standard.stringArray(forKey: viewedAssetIdsKey) ?? []
+        if !viewedIds.contains(id) {
+            viewedIds.append(id)
+            UserDefaults.standard.set(viewedIds, forKey: viewedAssetIdsKey)
         }
+        UserDefaults.standard.set(true, forKey: sessionInProgressKey)
+        
+        // Salva o conferma la data della sessione corrente
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        UserDefaults.standard.set(formatter.string(from: Date()), forKey: sessionDateKey)
+        
+        objectWillChange.send()
+    }
         
         func removeLastViewedAsset(id: String) {
             var viewedIds = UserDefaults.standard.stringArray(forKey: viewedAssetIdsKey) ?? []
@@ -179,12 +204,13 @@ class PhotoManager: NSObject, ObservableObject {
             objectWillChange.send()
         }
         
-        func clearSessionState() {
-            UserDefaults.standard.set(false, forKey: sessionInProgressKey)
-            UserDefaults.standard.set([], forKey: viewedAssetIdsKey)
-            UserDefaults.standard.set(0, forKey: sessionTotalCountKey)
-            objectWillChange.send()
-        }
+    func clearSessionState() {
+        UserDefaults.standard.set(false, forKey: sessionInProgressKey)
+        UserDefaults.standard.set([], forKey: viewedAssetIdsKey)
+        UserDefaults.standard.set(0, forKey: sessionTotalCountKey)
+        UserDefaults.standard.set("", forKey: sessionDateKey) // Svuota la data al termine della sessione
+        objectWillChange.send()
+    }
     
     func getAssetSize(asset: PHAsset) -> Double {
         let resources = PHAssetResource.assetResources(for: asset)
